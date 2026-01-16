@@ -1,0 +1,184 @@
+void arduino_communication_step(void)
+{
+  real_T Sum15;
+  real_T rtb_Add_cc;
+  real_T rtb_DiscreteFIRFilter2;
+  real_T rtb_Secondarypathestimate2;
+  int32_T cff;
+  int32_T j;
+
+
+  Sum15 = (arduino_communication_U.In1 / arduino_communication_P.Constant_Value
+           - arduino_communication_P.Constant3_Value) *
+    arduino_communication_P.Ku_Value + arduino_communication_DW.Delay3_DSTATE *
+    arduino_communication_DW.DiscreteTimeIntegrator_DSTATE;
+
+  /* DiscreteFir: '<Root>/Discrete FIR Filter2' incorporates:
+   *  Delay: '<Root>/Delay1'
+   */
+  rtb_DiscreteFIRFilter2 = Sum15 * arduino_communication_DW.Delay1_DSTATE[0];
+  cff = 1;
+  for (j = arduino_communication_DW.DiscreteFIRFilter2_circBuf; j < 31; j++) {
+    rtb_DiscreteFIRFilter2 +=
+      arduino_communication_DW.DiscreteFIRFilter2_states[j] *
+      arduino_communication_DW.Delay1_DSTATE[cff];
+    cff++;
+  }
+
+  for (j = 0; j < arduino_communication_DW.DiscreteFIRFilter2_circBuf; j++) {
+    rtb_DiscreteFIRFilter2 +=
+      arduino_communication_DW.DiscreteFIRFilter2_states[j] *
+      arduino_communication_DW.Delay1_DSTATE[cff];
+    cff++;
+  }
+
+  /* End of DiscreteFir: '<Root>/Discrete FIR Filter2' */
+
+  /* Sum: '<S4>/Add' incorporates:
+   *  Constant: '<S4>/Constant'
+   *  Constant: '<S4>/Constant3'
+   *  Gain: '<Root>/Gain1'
+   *  Product: '<S4>/Divide'
+   */
+  rtb_Add_cc = floor(arduino_communication_P.Gain1_Gain * rtb_DiscreteFIRFilter2
+                     / arduino_communication_P.Constant_Value_k -
+                     arduino_communication_P.Constant3_Value_o);
+  if (rtIsNaN(rtb_Add_cc) || rtIsInf(rtb_Add_cc)) {
+    rtb_Add_cc = 0.0;
+  } else {
+    rtb_Add_cc = fmod(rtb_Add_cc, 65536.0);
+  }
+
+  /* Outport: '<Root>/Output' incorporates:
+   *  Sum: '<S4>/Add'
+   */
+  arduino_communication_Y.Output = (uint16_T)(rtb_Add_cc < 0.0 ? (int32_T)
+    (uint16_T)-(int16_T)(uint16_T)-rtb_Add_cc : (int32_T)(uint16_T)rtb_Add_cc);
+
+  /* Sum: '<S5>/Add' incorporates:
+   *  Constant: '<S5>/Constant'
+   *  Constant: '<S5>/Constant3'
+   *  Inport: '<Root>/In2'
+   *  Product: '<S5>/Divide'
+   */
+  rtb_Add_cc = arduino_communication_U.In2 /
+    arduino_communication_P.Constant_Value_c -
+    arduino_communication_P.Constant3_Value_a;
+
+  /* Product: '<S1>/Product' */
+  arduino_communication_B.Product = rtb_Add_cc * rtb_DiscreteFIRFilter2;
+
+  /* DiscreteFir: '<Root>/Secondary path estimate2' */
+  rtb_Secondarypathestimate2 = Sum15 *
+    arduino_communication_P.Secondarypathestimate2_Coeffici[0];
+  cff = 1;
+  for (j = arduino_communication_DW.Secondarypathestimate2_circBuf; j < 31; j++)
+  {
+    rtb_Secondarypathestimate2 +=
+      arduino_communication_DW.Secondarypathestimate2_states[j] *
+      arduino_communication_P.Secondarypathestimate2_Coeffici[cff];
+    cff++;
+  }
+
+  for (j = 0; j < arduino_communication_DW.Secondarypathestimate2_circBuf; j++)
+  {
+    rtb_Secondarypathestimate2 +=
+      arduino_communication_DW.Secondarypathestimate2_states[j] *
+      arduino_communication_P.Secondarypathestimate2_Coeffici[cff];
+    cff++;
+  }
+
+  /* End of DiscreteFir: '<Root>/Secondary path estimate2' */
+
+  /* MATLABSystem: '<Root>/LMS Update1' */
+  if (arduino_communication_DW.obj.LeakageFactor !=
+      arduino_communication_P.LMSUpdate1_LeakageFactor) {
+    if (arduino_communication_DW.obj.isInitialized == 1) {
+      arduino_communication_DW.obj.TunablePropsChanged = true;
+    }
+
+    arduino_communication_DW.obj.LeakageFactor =
+      arduino_communication_P.LMSUpdate1_LeakageFactor;
+  }
+
+  if (arduino_communication_DW.obj.TunablePropsChanged) {
+    arduino_communication_DW.obj.TunablePropsChanged = false;
+  }
+
+  memcpy(&arduino_communication_B.dv[0], &arduino_communication_DW.obj.xBuffer[0],
+         31U * sizeof(real_T));
+  memcpy(&arduino_communication_DW.obj.xBuffer[1], &arduino_communication_B.dv[0],
+         31U * sizeof(real_T));
+  arduino_communication_DW.obj.xBuffer[0] = rtb_Secondarypathestimate2;
+
+  /* Update for Delay: '<Root>/Delay3' */
+  arduino_communication_DW.Delay3_DSTATE = rtb_DiscreteFIRFilter2;
+
+  /* Update for DiscreteIntegrator: '<S2>/Discrete-Time Integrator' incorporates:
+   *  Constant: '<Root>/lamda1'
+   *  Product: '<S1>/Product1'
+   */
+  arduino_communication_DW.DiscreteTimeIntegrator_DSTATE +=
+    arduino_communication_B.Product * arduino_communication_P.lamda1_Value *
+    arduino_communication_P.DiscreteTimeIntegrator_gainval;
+  for (cff = 0; cff < 32; cff++) {
+    /* MATLABSystem: '<Root>/LMS Update1' incorporates:
+     *  Constant: '<Root>/Step-size2'
+     */
+    rtb_DiscreteFIRFilter2 = arduino_communication_P.Stepsize2_Value *
+      arduino_communication_DW.obj.xBuffer[cff] * rtb_Add_cc +
+      arduino_communication_DW.obj.LeakageFactor *
+      arduino_communication_DW.obj.Weights[cff];
+    arduino_communication_DW.obj.Weights[cff] = rtb_DiscreteFIRFilter2;
+
+    /* Update for Delay: '<Root>/Delay1' incorporates:
+     *  MATLABSystem: '<Root>/LMS Update1'
+     */
+    arduino_communication_DW.Delay1_DSTATE[cff] = rtb_DiscreteFIRFilter2;
+  }
+
+  /* Update for DiscreteFir: '<Root>/Discrete FIR Filter2' */
+  /* Update circular buffer index */
+  arduino_communication_DW.DiscreteFIRFilter2_circBuf--;
+  if (arduino_communication_DW.DiscreteFIRFilter2_circBuf < 0) {
+    arduino_communication_DW.DiscreteFIRFilter2_circBuf = 30;
+  }
+
+  /* Update circular buffer */
+  arduino_communication_DW.DiscreteFIRFilter2_states[arduino_communication_DW.DiscreteFIRFilter2_circBuf]
+    = Sum15;
+
+  /* End of Update for DiscreteFir: '<Root>/Discrete FIR Filter2' */
+
+  /* Update for DiscreteFir: '<Root>/Secondary path estimate2' */
+  /* Update circular buffer index */
+  arduino_communication_DW.Secondarypathestimate2_circBuf--;
+  if (arduino_communication_DW.Secondarypathestimate2_circBuf < 0) {
+    arduino_communication_DW.Secondarypathestimate2_circBuf = 30;
+  }
+
+  /* Update circular buffer */
+  arduino_communication_DW.Secondarypathestimate2_states[arduino_communication_DW.Secondarypathestimate2_circBuf]
+    = Sum15;
+
+  /* End of Update for DiscreteFir: '<Root>/Secondary path estimate2' */
+
+  /* Update absolute time for base rate */
+  /* The "clockTick0" counts the number of times the code of this task has
+   * been executed. The absolute time is the multiplication of "clockTick0"
+   * and "Timing.stepSize0". Size of "clockTick0" ensures timer will not
+   * overflow during the application lifespan selected.
+   * Timer of this task consists of two 32 bit unsigned integers.
+   * The two integers represent the low bits Timing.clockTick0 and the high bits
+   * Timing.clockTickH0. When the low bit overflows to 0, the high bits increment.
+   */
+  if (!(++arduino_communication_M->Timing.clockTick0)) {
+    ++arduino_communication_M->Timing.clockTickH0;
+  }
+
+  arduino_communication_M->Timing.taskTime0 =
+    arduino_communication_M->Timing.clockTick0 *
+    arduino_communication_M->Timing.stepSize0 +
+    arduino_communication_M->Timing.clockTickH0 *
+    arduino_communication_M->Timing.stepSize0 * 4294967296.0;
+}
